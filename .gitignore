@@ -1,0 +1,5 @@
+venv/
+clean_trainset_28spk_wav/
+preprocessed/
+rir_output_50k/
+reverb_trainset_28spk_wav/
