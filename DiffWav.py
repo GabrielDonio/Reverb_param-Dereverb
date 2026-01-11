@@ -32,7 +32,7 @@ class ResidualBlock(nn.Module):
         
         return (x + res) * math.sqrt(0.5), skip
 class DiffWave(nn.Module):
-    def __init__(self, n_layers=20, res_channels=32, skip_channels=32):
+    def __init__(self, n_layers=45, res_channels=32, skip_channels=32):
         super().__init__()
         self.input_projection = nn.Conv1d(1, res_channels, 1)
         self.diffusion_embedding = DiffusionEmbedding(128)

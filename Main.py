@@ -5,7 +5,7 @@ from Diffwave import DiffWave
 from TrainDerev import TrainDerev
 from Forward import ForwardRev
 #Hyperparameters
-BATCH_SIZE = 8
+BATCH_SIZE = 4
 LR = 1e-3
 EPOCHS = 2
 

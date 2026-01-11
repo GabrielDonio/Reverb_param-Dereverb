@@ -2,7 +2,7 @@ import torch
 import random
 
 class TrainDerev:
-    def __init__(self, model, loss_fn, optimizer, forward, scaler=None, accum_steps=16):
+    def __init__(self, model, loss_fn, optimizer, forward, scaler=None, accum_steps=8):
         self.model = model
         self.loss_fn = loss_fn
         self.optimizer = optimizer
