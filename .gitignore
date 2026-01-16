@@ -2,4 +2,6 @@ venv/
 clean_trainset_28spk_wav/
 preprocessed/
 rir_output_50k/
-reverb_trainset_28spk_wav/
+reverb_trainset_28spk_wav/*
+clean_testset_wav/
+reverb_testset_wav/
