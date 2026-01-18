@@ -40,6 +40,6 @@ class TrainDerev:
 
         val = loss_unreduced.item()
         del x_t, pred, loss, loss_unreduced
-        torch.cuda.empty_cache()
+        #torch.cuda.empty_cache()
         return val
 

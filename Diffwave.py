@@ -1,3 +1,4 @@
+from email.mime import audio
 import torch 
 import torchaudio
 import torch.nn as nn
@@ -18,7 +19,7 @@ class ResidualBlock(nn.Module):
 
     def forward(self, x, diffusion_step):
         # x shape: [B, C, L]
-        # diffusion_step shape: [B, 512]
+        # diffusion_step shape: [B, 256]
         
         diffusion_step = self.diffusion_projection(diffusion_step).unsqueeze(-1)
         y = x + diffusion_step
@@ -30,10 +31,14 @@ class ResidualBlock(nn.Module):
         res = self.output_projection(y)
         skip = self.skip_projection(y)
         
-        return (x + res) * math.sqrt(0.5), skip
+        res = res + x  # residual connection
+        return res, skip
 class DiffWave(nn.Module):
     def __init__(self, n_layers=25, res_channels=48, skip_channels=32):
         super().__init__()
+        self.res_channels = res_channels
+        self.skip_channels = skip_channels
+
         self.input_projection = nn.Conv1d(1, res_channels, 1)
         self.diffusion_embedding = DiffusionEmbedding(128)
         
@@ -55,28 +60,30 @@ class DiffWave(nn.Module):
         )
 
     def forward(self, audio, t):
-        # audio: [B, L] ou [B, 1, L]
-        if audio.dim() == 2:
-            x = audio.unsqueeze(1)  # [B, 1, L]
-        elif audio.dim() == 3:
-            x = audio  # [B, 1, L]
-        else:
-            raise ValueError("audio must be 2D or 3D tensor")
-        x = F.relu(self.input_projection(x))
+        # Handle input shapes: accept [B, L] or [B, 1, L] or [B, C, L] -> collapse channels to mono
+        was_2d = (audio.dim() == 2)
+        if was_2d:
+            audio = audio.unsqueeze(1)  # [B, 1, L]
+        if audio.dim() == 3 and audio.size(1) != 1:
+            audio = audio.mean(dim=1, keepdim=True)
 
-        t_emb = t.squeeze(-1) if t.dim() == 2 else t
-        diffusion_step = self.diffusion_mlp(self.diffusion_embedding(t_emb)) 
-        
-        skip_connection = 0
+        x = F.relu(self.input_projection(audio))  # [B, res_channels, L]
+
+        # Prepare diffusion embedding
+        t_emb = t
+        if t_emb.dim() == 1:
+            t_emb = t_emb.unsqueeze(-1)
+        diffusion_step = self.diffusion_mlp(self.diffusion_embedding(t_emb))  # [B, 256]
+
+        # Accumulate skip connections
+        skip_acc = torch.zeros((x.size(0), self.skip_channels, x.size(2)), device=x.device, dtype=x.dtype)
         for layer in self.residual_layers:
             x, skip = layer(x, diffusion_step)
-            skip_connection = skip_connection + skip
-            
-        x = skip_connection * math.sqrt(1.0 / len(self.residual_layers))
-        x = self.final_projection(x)
-        return x.squeeze(1)
-def count_parameters(model):
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+            skip_acc = skip_acc + skip
 
-model = DiffWave()
-print(f"Le modèle a {count_parameters(model):,} paramètres entraînables.")
+        out = self.final_projection(F.relu(skip_acc))  # [B, 1, L]
+
+        # Always return [B, 1, L] to avoid broadcasting issues with targets shaped [B,1,L]
+        # (do not squeeze based on input form)
+        return out
+        

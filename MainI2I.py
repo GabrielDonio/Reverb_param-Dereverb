@@ -3,8 +3,8 @@ import torch
 import glob
 from Bucketing import DataReverb, collate_pad, ShuffledBatchSampler
 from Diffwave import DiffWave
-from TrainDerev import TrainDerev
-from Forward import ForwardRev
+from TrainI2I import TrainDerev
+from ForwardRev import ForwardBridge
 from LossReverb import LossReverb
 #Hyperparameters
 BATCH_SIZE = 4
@@ -41,7 +41,7 @@ if os.path.exists("derev_model.pth"):
     model.load_state_dict(torch.load("derev_model.pth"))
 optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 criterion = LossReverb()
-forward = ForwardRev()
+forward = ForwardBridge()
 Scaler = torch.amp.GradScaler(device="cuda" if torch.cuda.is_available() else "cpu")
 Trainer = TrainDerev(model, criterion, optimizer, forward, Scaler)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

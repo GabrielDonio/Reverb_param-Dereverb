@@ -4,7 +4,7 @@ from torch.utils.data import DataLoader, Sampler
 import glob
 import random
 class DataReverb(data.Dataset):
-    def __init__(self, files1, files2, transform=None,N=4000):
+    def __init__(self, files1, files2, transform=None,N=2000):
         self.files1 = files1
         self.files2 = files2
         self.transform = transform
