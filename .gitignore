@@ -6,3 +6,5 @@ reverb_trainset_28spk_wav/
 clean_testset_wav/
 reverb_testset_wav/
 __pycache__/
+noisy_trainset_28spk_wav/
+noisy_testset_wav/
