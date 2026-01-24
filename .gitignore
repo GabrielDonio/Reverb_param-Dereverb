@@ -9,3 +9,5 @@ __pycache__/
 noisy_trainset_28spk_wav/
 noisy_testset_wav/
 spec/
+noisy_trainset_56spk_wav/
+clean_trainset_56spk_wav/
