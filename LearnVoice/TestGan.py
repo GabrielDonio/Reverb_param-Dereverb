@@ -10,10 +10,10 @@ import torch.nn.functional as F
 import random
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")   
-generator = ConformerModel(freqdim=256, heads=8, ffn_dim=128, depth=3, conv_kernel_size=25, dropout=0.1).to(device)
+generator = ConformerModel(freqdim=256, heads=8, ffn_dim=192, depth=3, conv_kernel_size=41, dropout=0.1).to(device)
 Crop_LENGTH = 137 
-if os.path.exists("LearnVoice/generator.pth"):
-    generator.load_state_dict(torch.load("LearnVoice/generator.pth", map_location=device))
+if os.path.exists("LearnVoice/generator1.pth"):
+    generator.load_state_dict(torch.load("LearnVoice/generator1.pth", map_location=device, weights_only=True))
 
 generator.eval()
 CLEAN_AUDIO_DIR = "clean_testset_wav/"
@@ -23,7 +23,7 @@ NOISY_AUDIO_DIR = glob.glob(NOISY_AUDIO_DIR + "*.wav")
 random_index = torch.randint(0, len(CLEAN_AUDIO_DIR), (1,)).item()
 clean_path = CLEAN_AUDIO_DIR[random_index]
 noisy_path = NOISY_AUDIO_DIR[random_index]
-clean_wave, sr = torchaudio.load(clean_path)      # waveform before resample
+clean_wave, sr = torchaudio.load(clean_path)     
 noisy_wave, sr = torchaudio.load(noisy_path)
 
 # resample waveforms and keep them
@@ -121,47 +121,20 @@ def invert_log_mag_spectrogram(
 
     return wav
 
-# -----------------------
-# Crop spectrogram, run generator, invert and add the original crop waveform
-# -----------------------
-B, T, F = noisy_spec.shape
-if T < Crop_LENGTH:
-    # pad temporal frames with zeros if too short
-    pad = torch.zeros((1, Crop_LENGTH, F), device=noisy_spec.device)
-    pad[:, :T, :] = noisy_spec
-    noisy_crop_spec = pad
-    start_frame = 0
-else:
-    start_frame = random.randint(0, T - Crop_LENGTH)
-    noisy_crop_spec = noisy_spec[:, start_frame:start_frame + Crop_LENGTH, :]
-
-# run generator on the cropped log-magnitude spectrogram
 with torch.no_grad():
-    mask = generator(noisy_crop_spec)            # expected same shape [1, Crop_LENGTH, F]
-    gen_spec = torch.clamp(noisy_crop_spec - mask, min=0.0)
+    enhanced_spec = generator(noisy_spec) 
+    enhanced_spec = enhanced_spec * noisy_spec
 
-# invert to waveform
-wav_gen = invert_log_mag_spectrogram(gen_spec, n_fft=N_FFT, hop_length=HOP_LENGTH, n_iter=64, device=device)  # [1, samples]
+    enhanced_wave = invert_log_mag_spectrogram(enhanced_spec, n_fft=N_FFT, hop_length=HOP_LENGTH, device=device)
+    enhanced_wave = enhanced_wave.cpu().squeeze().numpy()
 
-# extract corresponding noisy waveform crop (mono)
-expected_len = (Crop_LENGTH - 1) * HOP_LENGTH + N_FFT
-sample_start = start_frame * HOP_LENGTH
-noisy_wave_mono = noisy_wave.mean(dim=0, keepdim=True) if noisy_wave.dim() == 2 else noisy_wave
-total_samples = noisy_wave_mono.shape[1] if noisy_wave_mono.dim() == 2 else noisy_wave_mono.shape[0]
-
-# ensure we have enough samples, pad if needed
-if sample_start + expected_len > noisy_wave_mono.shape[1]:
-    pad_len = sample_start + expected_len - noisy_wave_mono.shape[1]
-    noisy_wave_mono = torch.cat([noisy_wave_mono, torch.zeros((1, pad_len))], dim=1)
-
-noisy_crop_wave = noisy_wave_mono[:, sample_start:sample_start + expected_len].to(device)  # [1, samples]
-
-# align shapes and add
-wav_gen = wav_gen.squeeze(0)           # [samples]
-noisy_crop_wave = noisy_crop_wave.squeeze(0).to(wav_gen.device)
-combined = wav_gen + noisy_crop_wave
-combined = combined.clamp(-1.0, 1.0)
-
-# play combined result
-sd.play(combined.cpu().numpy(), samplerate=16000)
-print("Playing combined (reconstructed + cropped noisy) segment.")
+    plot_spectrogram(enhanced_spec, title="Enhanced Spectrogram")
+    plot_spectrogram(clean_spec, title="Clean Spectrogram")
+    plot_spectrogram(noisy_spec, title="Noisy Spectrogram")
+    plt.show()
+    plt.plot(enhanced_wave, label="Enhanced", alpha=0.7)
+    plt.show()
+    plt.plot(clean_wave.cpu().squeeze().numpy(), label="Clean", alpha=0.7)
+    plt.show()
+    plt.plot(noisy_wave.cpu().squeeze().numpy(), label="Noisy", alpha=0.7)
+    plt.show()

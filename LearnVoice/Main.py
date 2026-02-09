@@ -10,21 +10,31 @@ from TransformModel import ConformerModel
 
 # --- Hyperparamètres ---
 MIN_LENGTH = 137
-BATCH_SIZE = 16
+BATCH_SIZE = 30
+GEN_EPOCHS = 2
 LR_GEN = 5e-4
 LR_DISC = 5e-5       
-L1_LAMBDA = 100      
-EPOCHS = 10
+L1_LAMBDA = 100
+GAN_LAMBDA = 1    
+EPOCHS = 5
 
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     os.makedirs("LearnVoice", exist_ok=True)
 
     dataset = SpectrogramDataset("spec/clean_spectrograms/", "spec/noisy_spectrograms/", N=MIN_LENGTH, Nb_files=30000)
-    dataloader = data.DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
+    dataloader = data.DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=8, pin_memory=True,persistent_workers=True, prefetch_factor=2)
+
+    torch.backends.cudnn.benchmark = True
 
     generator = ConformerModel(freqdim=256, heads=8, ffn_dim=192, depth=3).to(device)
+    if os.path.exists("LearnVoice/generator1.pth"):
+        generator.load_state_dict(torch.load("LearnVoice/generator1.pth"))
+        print("Generator loaded from checkpoint.")
     discriminator = MediumLightDiscriminator2D().to(device)
+    if os.path.exists("LearnVoice/discriminator1.pth"):
+        discriminator.load_state_dict(torch.load("LearnVoice/discriminator1.pth"))
+        print("Discriminator loaded from checkpoint.")
 
     gen_optimizer = optim.Adam(generator.parameters(), lr=LR_GEN, betas=(0.5, 0.999))
     disc_optimizer = optim.Adam(discriminator.parameters(), lr=LR_DISC, betas=(0.5, 0.999))
@@ -32,7 +42,8 @@ if __name__ == "__main__":
     criterion_L1 = torch.nn.L1Loss()
     criterion_GAN = torch.nn.MSELoss() 
     
-    scaler = torch.amp.GradScaler()
+    scaler_G = torch.amp.GradScaler()
+    scaler_D = torch.amp.GradScaler()
 
     for epoch in range(EPOCHS):
         running_D, running_G_GAN, running_L1 = 0.0, 0.0, 0.0
@@ -41,40 +52,46 @@ if __name__ == "__main__":
             noisy_spec, clean_spec = noisy_spec.to(device), clean_spec.to(device)
 
             # --- ENTRAÎNEMENT DU DISCRIMINATEUR ---
-            with torch.amp.autocast(device_type="cuda"):
-                fake_spec = generator(noisy_spec) 
-                fake_spec = fake_spec*noisy_spec  
-                
-                d_real = discriminator(clean_spec, noisy_spec)
-                d_fake = discriminator(fake_spec.detach(), noisy_spec)
-                
-                # Injection de bruit dans les labels (0.7-1.2 pour Real, 0.0-0.3 pour Fake)
-                # C'est ce qui empêche D de descendre à zéro et de tuer G
-                real_label_val = 0.8 + (random.random() * 0.2)
-                fake_label_val = random.random() * 0.2
-                
-                loss_D_real = criterion_GAN(d_real, torch.ones_like(d_real) * real_label_val)
-                loss_D_fake = criterion_GAN(d_fake, torch.zeros_like(d_fake) + fake_label_val)
-                loss_D = 0.5 * (loss_D_real + loss_D_fake)
+            if i % 50 == 0:
+                with torch.amp.autocast(device_type="cuda"):
+                    with torch.no_grad():
+                        fake_spec = generator(noisy_spec) 
+                    fake_spec = fake_spec*noisy_spec  
+                    
+                    d_real = discriminator(clean_spec, noisy_spec)
+                    d_fake = discriminator(fake_spec.detach(), noisy_spec)
+                    
+                    real_label_val = 0.8 + (random.random() * 0.2)
+                    fake_label_val = 0.0 + (random.random() * 0.2)
+                    
+                    loss_D_real = criterion_GAN(d_real, torch.ones_like(d_real) * real_label_val)
+                    loss_D_fake = criterion_GAN(d_fake, torch.zeros_like(d_fake) + fake_label_val)
+                    loss_D = 0.5 * (loss_D_real + loss_D_fake)
 
-            disc_optimizer.zero_grad()
-            scaler.scale(loss_D).backward()
-            scaler.step(disc_optimizer)
+                disc_optimizer.zero_grad()
+                scaler_D.scale(loss_D).backward()
+                scaler_D.step(disc_optimizer)
+                scaler_D.update()
+                for p in discriminator.parameters():
+                    p.requires_grad_(False)
+         # --- ENTRAÎNEMENT DU GÉNÉRATEUR ---
+            for _ in range(GEN_EPOCHS):
+                with torch.amp.autocast(device_type="cuda"):
+                    fake_spec = generator(noisy_spec)
+                    fake_spec = fake_spec*noisy_spec
+                    d_fake_for_G = discriminator(fake_spec, noisy_spec)
+                    
+                    loss_GAN = criterion_GAN(d_fake_for_G, torch.ones_like(d_fake_for_G))
+                    loss_L1 = criterion_L1(fake_spec, clean_spec)
+                    
+                    loss_G = (GAN_LAMBDA * loss_GAN) + (L1_LAMBDA * loss_L1)
 
-            # --- ENTRAÎNEMENT DU GÉNÉRATEUR ---
-            with torch.amp.autocast(device_type="cuda"):
-                d_fake_for_G = discriminator(fake_spec, noisy_spec)
-                
-                loss_GAN = criterion_GAN(d_fake_for_G, torch.ones_like(d_fake_for_G))
-                loss_L1 = criterion_L1(fake_spec, clean_spec)
-                
-                loss_G = loss_GAN + (L1_LAMBDA * loss_L1)
-
-            gen_optimizer.zero_grad()
-            scaler.scale(loss_G).backward()
-            scaler.step(gen_optimizer)
-            
-            scaler.update()
+                gen_optimizer.zero_grad()
+                scaler_G.scale(loss_G).backward()
+                scaler_G.step(gen_optimizer)
+                scaler_G.update()
+            for p in discriminator.parameters():
+               p.requires_grad_(True)
 
             running_D += loss_D.item()
             running_G_GAN += loss_GAN.item()
