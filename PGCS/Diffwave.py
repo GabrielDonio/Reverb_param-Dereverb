@@ -3,7 +3,7 @@ import torch
 import torchaudio
 import torch.nn as nn
 import math
-from DiffusionEmb import DiffusionEmbedding
+from PGCS.DiffusionEmb import DiffusionEmbedding
 import torch.nn.functional as F
 
 class ResidualBlock(nn.Module):

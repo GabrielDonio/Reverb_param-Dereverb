@@ -1,65 +1,70 @@
 import os
 import torch
 import glob
-from Bucketing import DataReverb, collate_pad, ShuffledBatchSampler
-from Diffwave import DiffWave
-from TrainDerev import TrainDerev
-from Forward import ForwardRev
-from LossReverb import LossReverb
-#Hyperparameters
-BATCH_SIZE = 4
-LR = 1e-3
-EPOCHS = 10
 
+from DiffWav import AudioWavUnet
+from DataReverb import PairedAudioDataset
+from torch.utils.data import DataLoader
 
+# Hyperparameters
+BATCH_SIZE = 32
+LR = 1e-4
+EPOCHS = 5
+LOG_INTERVAL = 20
+ALPHA = 0
+EPS_NOISE = 0.005
 
 # Chargement des fichiers
 clean_files = sorted(glob.glob("preprocessed/clean/*.pt"))
 reverb_files = sorted(glob.glob("preprocessed/reverb/*.pt"))
-lengths = torch.load("preprocessed/lengths.pt", weights_only=True)
-sorted_indices = sorted(range(len(lengths)), key=lambda i: lengths[i])
-files1_sorted = [clean_files[i] for i in sorted_indices]
-files2_sorted = [reverb_files[i] for i in sorted_indices]
+if __name__ == "__main__":
+    model = AudioWavUnet()
+    if os.path.exists("dereverb_model.pth"):
+        model.load_state_dict(torch.load("dereverb_model.pth"))
+    device = 'cuda'
+    model.to(device)
 
-dataset = DataReverb(files1_sorted, files2_sorted)
+    dataset = PairedAudioDataset("preprocessed/clean", "preprocessed/reverb",N_min=16000)
+    loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True,num_workers=4, pin_memory=True)
 
-batches = [
-    list(range(i, min(i + BATCH_SIZE, len(dataset))))
-    for i in range(0, len(dataset), BATCH_SIZE)
-]
-batch_sampler = ShuffledBatchSampler(batches, shuffle=True)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LR,fused=True)
+    """def loss_fn(output, clean):
+        output_fft = torch.fft.rfft(output.squeeze(1).float())
+        clean_fft = torch.fft.rfft(clean.squeeze(1).float())
+        output_mag = torch.abs(output_fft)
+        clean_mag = torch.abs(clean_fft)
+        return ALPHA*torch.nn.functional.l1_loss(output_mag, clean_mag) + torch.nn.functional.mse_loss(output, clean)
+"""
+    loss_fn = torch.nn.MSELoss()
 
-loader = torch.utils.data.DataLoader(
-    dataset,
-    batch_sampler=batch_sampler,
-    collate_fn=collate_pad,
-)
+    scaler = torch.amp.GradScaler()
 
+    torch.backends.cudnn.benchmark = True
+    model.train()
+    for epoch in range(EPOCHS):
+        running_loss = 0.0
+        running_count = 0
+        for batch_idx, (reverb, clean) in enumerate(loader):
+            reverb, clean = reverb.to(device), clean.to(device)
+            reverb = reverb.unsqueeze(1) 
+            clean = clean.unsqueeze(1)   
+            t = torch.rand(reverb.size(0),device=device) 
+            with torch.amp.autocast(device_type=device):
+                fct = t[:,None,None]
+                reverb = (1-fct)*clean + fct*reverb + EPS_NOISE*torch.randn_like(reverb)
+                output = model(reverb, t)
+                loss = loss_fn(output, clean)
+            optimizer.zero_grad(set_to_none=True)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
-model = DiffWave()
-if os.path.exists("derev_model.pth"):
-    model.load_state_dict(torch.load("derev_model.pth"))
-optimizer = torch.optim.Adam(model.parameters(), lr=LR)
-criterion = LossReverb()
-forward = ForwardRev()
-Scaler = torch.amp.GradScaler(device="cuda" if torch.cuda.is_available() else "cpu")
-Trainer = TrainDerev(model, criterion, optimizer, forward, Scaler)
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model.to(device)
+            running_loss += loss.item()
+            running_count += 1
 
-for epoch in range(EPOCHS):
-    print(f"Epoch {epoch+1}/{EPOCHS}")
-    total_loss = 0
-    for batch_idx, (clean, reverb, lengths) in enumerate(loader):
-        x = clean.to(device)
-        y = reverb.to(device)
-        loss = Trainer.train_step(x, y)
-        total_loss += loss
-        if batch_idx % 20 == 0:
-            print(f"Epoch {epoch+1}, Batch {batch_idx} of {len(loader)}, Loss: {loss:.4f}")
-        if batch_idx>200:
-            break
-    avg_loss = total_loss / 200
-    print(f"Epoch {epoch+1} completed. Average Loss: {avg_loss:.4f}")
-torch.save(model.state_dict(), "derev_model.pth")
-
+            if (running_count % LOG_INTERVAL == 0):
+                avg = running_loss / running_count
+                print(f"Epoch {epoch}  batch {batch_idx}  avg_loss/{LOG_INTERVAL} = {avg:.6f}")
+                running_loss = 0.0
+                running_count = 0
+    torch.save(model.state_dict(), "dereverb_model.pth")

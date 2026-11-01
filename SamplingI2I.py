@@ -1,6 +1,6 @@
 import torch
 import os
-from Diffwave import DiffWave
+from PGCS.Diffwave import DiffWave
 from ForwardRev import ForwardBridge
 from matplotlib import pyplot as plt
 

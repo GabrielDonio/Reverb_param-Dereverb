@@ -1,7 +1,7 @@
 import torch 
 import torchaudio
 from DataRIR import RIRDataset
-from Diffwave import DiffWave
+from PGCS.Diffwave import DiffWave
 from Forward import ForwardDiffusion
 import torch.utils.data as Dataloaders
 import glob

@@ -2,7 +2,7 @@ import os
 import torch
 import glob
 from Bucketing import DataReverb, collate_pad, ShuffledBatchSampler
-from Diffwave import DiffWave
+from PGCS.Diffwave import DiffWave
 from TrainI2I import TrainDerev
 from ForwardRev import ForwardBridge
 from LossReverb import LossReverb

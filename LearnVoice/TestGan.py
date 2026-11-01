@@ -42,7 +42,6 @@ clean_spec = clean_spec[:,:-1,:]
 noisy_spec = noisy_spec[:,:-1,:]
 clean_spec = clean_spec.to(device)  
 noisy_spec = noisy_spec.to(device)
-
 # handle channel dim safely, permute to [T, F], add batch dim [B=1, T, F]
 if clean_spec.dim() == 3 and clean_spec.shape[0] == 1:
     clean_spec = clean_spec.squeeze(0)

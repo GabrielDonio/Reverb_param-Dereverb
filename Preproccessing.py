@@ -1,64 +1,31 @@
-import os
-import glob
 import torch
 import torchaudio
+import glob
+import os
 
-# =========================
-# CONFIG
-# =========================
-clean_path = "clean_trainset_28spk_wav"
-reverb_path = "reverb_trainset_28spk_wav"
-out_path = "preprocessed"
 
-target_sr = 16000
-crop_begin = 4000
-crop_end = 500
+REVERB_AUDIO_DIR = "reverb_trainset_56spk_wav/"
+REVERB_AUDIO_DIR = glob.glob(REVERB_AUDIO_DIR + "*.wav")
+SAMPLE_RATE = 16000
+N_FFT = 512
+HOP_LENGTH = 128
+i=0
+for reverb_path in REVERB_AUDIO_DIR:
+    reverb, sr = torchaudio.load(reverb_path)
 
-os.makedirs(out_path + "/clean", exist_ok=True)
-os.makedirs(out_path + "/reverb", exist_ok=True)
+    reverb_spec = torchaudio.transforms.Resample(orig_freq=sr, new_freq=SAMPLE_RATE)(reverb)
 
-clean_files = sorted(glob.glob(clean_path + "/*.wav"))
-reverb_files = sorted(glob.glob(reverb_path + "/*.wav"))
+    reverb_spec = torchaudio.transforms.Spectrogram(n_fft=N_FFT, hop_length=HOP_LENGTH,power=1)(reverb_spec)
+    reverb_spec = torch.log1p(reverb_spec)
 
-assert len(clean_files) == len(reverb_files)
+    reverb_spec = reverb_spec[:,:-1,:]
 
-lengths = []
+    reverb_spec = reverb_spec.permute(0,2,1)
+    name_reverb = os.path.splitext(os.path.basename(reverb_path))[0]
 
-print(f"Preprocessing {len(clean_files)} files...")
+    os.makedirs("spec/reverb_spectrograms", exist_ok=True)
 
-for i, (cf, rf) in enumerate(zip(clean_files, reverb_files)):
-    clean, sr1 = torchaudio.load(cf)
-    reverb, sr2 = torchaudio.load(rf)
-
-    if sr1 != target_sr:
-        clean = torchaudio.functional.resample(clean, sr1, target_sr)
-    if sr2 != target_sr:
-        reverb = torchaudio.functional.resample(reverb, sr2, target_sr)
-
-    # mono
-    clean = clean[0]
-    reverb = reverb[0]
-
-    # crop
-    T = min(clean.shape[0], reverb.shape[0])
-    clean = clean[:T]
-    reverb = reverb[:T]
-
-    clean = clean[crop_begin:T - crop_end]
-    reverb = reverb[crop_begin:T - crop_end]
-
-    assert clean.shape[0] > 0
-
-    # save
-    name = f"{i:06d}.pt"
-    torch.save(clean, f"{out_path}/clean/{name}")
-    torch.save(reverb, f"{out_path}/reverb/{name}")
-
-    lengths.append(clean.shape[0])
-
+    torch.save(reverb_spec, f"spec/reverb_spectrograms/{name_reverb}.pt")
+    i+=1
     if i % 500 == 0:
-        print(f"  processed {i}/{len(clean_files)}")
-
-torch.save(lengths, f"{out_path}/lengths.pt")
-
-print("✅ Preprocessing terminé")
+        print(f"Processed {i} files")

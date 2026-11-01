@@ -2,7 +2,7 @@ import os
 import torch 
 import torchaudio
 import matplotlib.pyplot as plt
-from Diffwave import DiffWave
+from PGCS.Diffwave import DiffWave
 from Forward import ForwardDiffusion
 
 # Configuration
